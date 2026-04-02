@@ -215,15 +215,65 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Experiments You Tried
 
-### Run 1 — Default confident / dance pop profile
+All profiles are defined in `src/main.py` and run together with `python src/main.py`. Each block below shows the terminal output and notes what the result reveals about the scoring logic.
+
+---
+
+### Normal Profiles
+
+#### Run 1 — Original: Confident / Dance Pop
+
+The baseline profile modeled after a real playlist (Sabrina Carpenter, Zara Larsson, Don Toliver, Tory Lanez). Energy and danceability carry the most weight. Top result should be "Espresso" or "Can't Tame Her" — songs that are near-perfect numerical matches even though "Espresso" is tagged `electropop`, not `dance pop`.
 
 ![Terminal output showing top 5 recommendations for the confident dance pop profile](image.png)
 
-Use this section to document the experiments you ran. For example:
+#### Run 2 — High-Energy Pop
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+Similar to Run 1 but with the genre locked tighter to `dance pop` and danceability weighted heavily. Songs with high danceability and bright valence should dominate even if their mood label doesn't match.
+
+![High-Energy Pop recommendations](image-1.png)
+
+#### Run 3 — Chill Lofi
+
+Low-energy, high-acousticness profile targeting study or wind-down listening. Energy weight is 0.30 (the highest), so the scorer strongly penalizes anything above ~0.45 energy. Lofi and ambient songs should rank at the top; pop and rock should fall to the bottom.
+
+![Chill Lofi recommendations](image-2.png)
+
+#### Run 4 — Deep Intense Rock
+
+Near-maximum energy (0.92), dark valence (0.30), fast tempo (~140 BPM). Genre weight is 0.20, the highest of any profile — making this the strictest genre constraint. Only one song in the catalog (`Storm Runner`) is tagged `rock`, so it should score significantly higher than everything else on genre alone.
+
+![Deep Intense Rock recommendations](image-3.png)
+
+---
+
+### Adversarial / Edge-Case Profiles
+
+These profiles are designed to expose flaws in the scoring logic, not to model a real listener.
+
+#### Run 5 — Contradicting Mood + Energy (`mood: "sad"`, `energy: 0.90`)
+
+`"sad"` does not appear anywhere in the catalog, so the mood weight (0.20) silently scores 0 for every song. 20% of the score budget is permanently wasted. The top results end up being high-energy tracks — the opposite emotional feel — because numerical energy proximity is the only thing left driving rankings.
+
+![Contradicting Mood + Energy recommendations](image-4.png)
+
+#### Run 6 — Phantom Genre + Mood (`genre: "classical"`, `mood: "melancholic"`)
+
+Neither label exists in the catalog. Both categorical weights (0.20 + 0.15 = 35% of budget) are always 0. The scorer falls back entirely on numerical proximity, which means songs are ranked only by how close they are numerically to the target values. The results may look reasonable on paper, but the genre and mood the user asked for are completely ignored.
+
+![Phantom Genre + Mood recommendations](image-5.png)
+
+#### Run 7 — Inflated Weights (sum = 1.80)
+
+All six weights are set to 0.30, making their sum 1.80 instead of 1.00. The scorer never validates or normalizes weights. A song that matches well on all features can score above 1.00 — breaking the `Score: X / 1.00` display contract printed in the terminal output.
+
+![Inflated Weights (sum = 1.80) recommendations](image-6.png)
+
+#### Run 8 — Out-of-Range Energy (`energy: 1.5`)
+
+Energy is set to 1.5, above the valid 0–1 scale. The proximity formula `1 - abs(1.5 - song_val)` produces a negative value for any song with energy below 0.5. With a 0.40 energy weight, those songs receive a negative score contribution, causing some final scores to go below 0.0. The ranking logic still runs without error, but the results and displayed scores violate the expected 0–1 range.
+
+![Out-of-Range Energy recommendations](image-7.png)
 
 ---
 
@@ -247,10 +297,9 @@ Read and complete `model_card.md`:
 
 [**Model Card**](model_card.md)
 
-Write 1 to 2 paragraphs here about what you learned:
+The biggest thing this project made clear is that a recommender does not actually understand music — it just compares numbers. When you tell the system you want "confident dance pop," it does not picture Sabrina Carpenter or a particular vibe. It looks at whatever number was stamped on each song for energy, danceability, and mood, and picks the ones whose numbers are closest to yours. That process works surprisingly well when the catalog is well-matched to the user — Can't Tame Her and Espresso both landed at the top of the High-Energy Pop results for exactly the right reasons. But it falls apart at the edges. The Chill Lofi profile returned an ambient space track (Spacewalk Thoughts) tied for first place above actual lofi songs, not because it sounded like lofi, but because its energy number (0.28) happened to be the closest to the target (0.25). The system had no idea those were different genres of quietness. Similarly, when we ran the Deep Intense Rock profile, Storm Runner was the only rock song in the entire catalog, so it always wins on genre — but slots two through five were filled by high-energy pop and r&b tracks that scored well on numbers alone. The system could not surface a second rock song because none existed.
 
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
+Comparing the adversarial profiles taught us something more unsettling: the system does not warn you when it is doing something wrong. Setting the mood to "sad" — a label that appears nowhere in the catalog — did not produce an error or a low confidence warning. The scorer just quietly ignored the mood weight and recommended Gym Hero, a high-energy gym anthem, as the top result for someone who asked for sad music. That happens because 30% of the score came from energy proximity (Gym Hero's energy was closest to the target of 0.90), and the 20% mood budget that should have steered things differently was permanently worth zero. The system looked confident — it printed a score of 0.67 out of 1.00 — but the result was completely wrong for what the user wanted. This is how real recommendation systems can develop bias invisibly: not through a single obvious mistake, but through weight distributions and catalog gaps that quietly favor certain users while the output still looks reasonable on the surface.
 
 
 ---
